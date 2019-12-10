@@ -1,10 +1,12 @@
 import csv
-import xlrd
-from dbfread import DBF, exceptions as dbfex
 import logging
-import time
-import config
 import re
+import time
+
+import xlrd
+from dbfread import DBF
+
+import config
 
 max_tries = 10
 wait_time = 5
@@ -28,9 +30,9 @@ class Loaders(object):
 		if len(code) < 6:
 			code = ('000000'+code)[-6:]
 		elif len(code) > 6:
-			if code[:3]=='999':
+			if code[:3] == '999':
 				code = code.replace('999', '')
-			elif code[:2]=='92':
+			elif code[:2] == '92':
 				code = code.replace('92', '2-')
 
 		return code
@@ -117,11 +119,11 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 						for row in csv.DictReader(file, delimiter=';', quoting=csv.QUOTE_ALL):
 							try:
 								yield [row['AXCODE'], row['PRICE'].replace(',', '.'), row['SUP_ID'], row['PRICE_ID'], _mask, row['SUPCODE']]
-							except Exception as e:
-								self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, e))
+							except Exception as err:
+								self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
 								continue
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -130,11 +132,9 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
-
-
 		try:
 			self.pgdb.batch_insert(ttb_insert, lazy_iter())
 		except Exception as e:
@@ -156,11 +156,11 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 							for row in range(startrow, sh.nrows):
 								try:
 									yield [sh.cell(row, 0).value, sh.cell(row, 7).value, sh.name, _mask]
-								except Exception as e:
-									self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, e))
+								except Exception as err:
+									self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
 									continue
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -169,8 +169,8 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
@@ -197,11 +197,11 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 									if sh.cell_type(row, k) == xlrd.XL_CELL_NUMBER:
 										try:
 											yield [sh.cell(row, 0).value, sh.cell(row, k).value, sh.name, str(k + 1), _mask]
-										except Exception as e:
-											self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, e))
+										except Exception as err:
+											self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
 											continue
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -210,8 +210,8 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
@@ -238,11 +238,11 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 									if sh.cell_type(row, col) == xlrd.XL_CELL_NUMBER and sh.cell_type(row, 0) == xlrd.XL_CELL_TEXT:
 										try:
 											yield [sh.cell(row, 0).value, sh.cell(row, col).value, sh.cell(0, col).value, sh.name, _mask]
-										except Exception as e:
-											self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, e))
+										except Exception as err:
+											self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
 											continue
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -251,8 +251,8 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
@@ -303,7 +303,7 @@ inner join db1_product pr on pr.id = p.id"""
 										for cd in code.split(','):
 											yield [sh.cell(row, 0).value.strip(), cd.strip(), sh.cell(row, 2).value.strip(), sh.cell(row, col).value, id1, sh.cell(row, col + 1).value.strip(), _mask]
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -312,8 +312,8 @@ inner join db1_product pr on pr.id = p.id"""
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
@@ -341,11 +341,11 @@ inner join db1_product p on p.id = rc.id"""
 						for row in csv.reader(file, delimiter=';', quoting=csv.QUOTE_NONE):
 							try:
 								yield [row[0], float(row[1].replace(',', '.')), _mask]
-							except Exception as e:
-								self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, e))
+							except Exception as err:
+								self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
 								continue
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -354,8 +354,8 @@ inner join db1_product p on p.id = rc.id"""
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
@@ -385,11 +385,11 @@ inner join db1_product p on p.id = rc.id"""
 							for row in range(startrow, sh.nrows):
 								try:
 									yield [sh.cell(row, 6).value, sh.cell(row, 3).value, _mask]
-								except Exception as e:
-									self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, e))
+								except Exception as err:
+									self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
 									continue
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -398,8 +398,8 @@ inner join db1_product p on p.id = rc.id"""
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
@@ -431,7 +431,7 @@ inner join db1_product pr on pr.id = ean.pid"""
 							for row in range(startrow, sh.nrows):
 								yield [sh.cell(row, 5).value.strip(), sh.cell(row, 2).value, sh.cell(row, 4).value.strip(), _mask]
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -440,8 +440,8 @@ inner join db1_product pr on pr.id = ean.pid"""
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
@@ -487,7 +487,7 @@ where f.cost>0"""
 									else:
 										pass
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -496,8 +496,8 @@ where f.cost>0"""
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
@@ -526,7 +526,7 @@ where f.cost>0"""
 									else:
 										pass
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -535,8 +535,8 @@ where f.cost>0"""
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
@@ -568,7 +568,7 @@ where f.cost>0"""
 									else:
 										pass
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -577,8 +577,8 @@ where f.cost>0"""
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
@@ -644,7 +644,7 @@ select code, price, id_p, %(mask)s, kod from ranked where rnk=1"""
 							else:
 								pass
 						keep_trying = False
-				except PermissionError as e:
+				except PermissionError:
 					if tries <= max_tries:
 						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
 						tries += 1
@@ -653,8 +653,8 @@ select code, price, id_p, %(mask)s, kod from ranked where rnk=1"""
 					else:
 						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
 						return
-				except Exception as e:
-					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, e))
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 
 		try:
