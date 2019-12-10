@@ -8,13 +8,14 @@ from itertools import chain
 
 from postgres import Postgres
 from Loaders import Loaders
-import config
+import config as conf
 
 # Возможность подключать внешние .py модули для обработки файлов. Делать так я конечно не буду, но вариант вообще интересный
 # spec = importlib.util.spec_from_file_location('loaders', loaders_dir + os.sep + 'loader_iafivemin.py')
 # module = importlib.util.module_from_spec(spec)
 # spec.loader.exec_module(module)
 # res = module.load('Rep2053_20190125_14_14.xls')
+
 
 def check_folder_exists(p):
 	os.makedirs(p, exist_ok=True)
@@ -57,11 +58,11 @@ def main():
 	logger.info('Начало работы')
 	for s in cfg.sections():
 		updflag = False
-		logger.name = config.APP_NAME + '.' + s
+		logger.name = conf.APP_NAME + '.' + s
 
 		try:
-			config.gc_sklitcode = cfg.get(s, 'gc_sklitcode')
-		except configparser.NoOptionError as e:
+			conf.gc_sklitcode = cfg.get(s, 'gc_sklitcode')
+		except configparser.NoOptionError:
 			logger.info('Не указан код СКЛИТ в секции {}'.format(s))
 			pass
 
@@ -69,7 +70,7 @@ def main():
 			host = cfg.get(s, 'host')
 			user = cfg.get(s, 'localdb')
 			workdir = cfg.get(s, 'workdir')
-			with Postgres(host, user, config.APP_NAME) as pgdb:
+			with Postgres(host, user, conf.APP_NAME) as pgdb:
 				ld = Loaders(pgdb)
 				tmp_ttb_create(pgdb)
 				summary = 0
@@ -117,7 +118,7 @@ if __name__ == '__main__':
 	if check_folder_exists(cwd + os.sep + 'logs'):
 		handlers.append(logging.FileHandler(cwd + os.sep + 'logs' + os.sep + datetime.datetime.strftime(datetime.datetime.now(), '%Y%m%d.log'), encoding='utf-8'))
 
-	logger = logging.getLogger(config.APP_NAME)
+	logger = logging.getLogger(conf.APP_NAME)
 	logger.setLevel(logging.INFO)
 
 	for h in handlers:
@@ -127,9 +128,9 @@ if __name__ == '__main__':
 
 	try:
 		cfg = configparser.ConfigParser()
-		cfg.read_file(open(settings,'r'))
+		cfg.read_file(open(settings, 'r'))
 		main()
-		logger.name = config.APP_NAME
+		logger.name = conf.APP_NAME
 		logger.info('Работа завершена')
 	except FileNotFoundError as err:
 		print('Не найден файл config.ini')
