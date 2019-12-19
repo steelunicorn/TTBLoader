@@ -45,7 +45,7 @@ class Loaders(object):
 		, ks.svss
 	from db1_product prod
 	inner join db1_classif kag on kag.id = prod.f28835914 and kag.code not like '%-%' and kag.code <>'0'
-	left join (select kag, min(svssgo) svss from svss group by kag) ks on ks.kag = kag.code
+	left join (select kag, min(svss) svss from svss inner join db1_product p on p.id = svss.id and p.f1376266 is null group by kag) ks on ks.kag = kag.code
 	where prod.class = 14745601 and prod.type = 14745601
 		and prod.f1376266 is null 
 		and not (lower(prod.name) like any(array['%акция%','%акционная%']))
