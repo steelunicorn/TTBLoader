@@ -47,6 +47,7 @@ class Loaders(object):
 	inner join db1_classif kag on kag.id = prod.f28835914 and kag.code not like '%-%' and kag.code <>'0'
 	left join (select kag, min(svssgo) svss from svss group by kag) ks on ks.kag = kag.code
 	where prod.class = 14745601 and prod.type = 14745601
+		and prod.f1376266 is null 
 		and not (lower(prod.name) like any(array['%акция%','%акционная%']))
 )
 insert into table_2bonus (kodpost, kag, cost, datecost)
