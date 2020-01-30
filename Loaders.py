@@ -60,7 +60,7 @@ insert into table_2bonus (kodpost, kag, cost, datecost)
 	inner join rivalformats rf on coalesce(rtrim(ltrim(rf.mask)),'') = coalesce(rtrim(ltrim(t.mask)),'') and coalesce(rtrim(ltrim(rf.id1)),'') = coalesce(rtrim(ltrim(t.id1)),'') and coalesce(rtrim(ltrim(rf.id2)),'') = coalesce(rtrim(ltrim(t.id2)),'')
 	inner join codekagsvss p on p.code = case when length(t.code)<6 then lpad(t.code::varchar,6,'0') else t.code end
 	where ( p.svss=0 or p.svss is null
-		or ((t.cost/p.svss*100-100) between -17 and 100 and p.svss<=50)
+		or ((t.cost/p.svss*100-100) between -17 and 500 and p.svss<=50)
 		or ((t.cost/p.svss*100-100) between -17 and 100 and p.svss>50 and p.svss<=100)
 		or ((t.cost/p.svss*100-100) between -17 and 100 and p.svss>100 and p.svss<=250)
 		or ((t.cost/p.svss*100-100) between -13 and 90 and p.svss>250 and p.svss<=500)
@@ -119,7 +119,7 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 					with open(_file, 'r') as file:
 						for row in csv.DictReader(file, delimiter=';', quoting=csv.QUOTE_ALL):
 							try:
-								yield [row['AXCODE'], row['PRICE'].replace(',', '.'), row['SUP_ID'], row['PRICE_ID'], _mask, row['SUPCODE']]
+								yield [row['GCCODE'], row['PRICE'].replace(',', '.'), row['SUP_ID'], row['PRICE_ID'], _mask, row['SELLER_CODE']]
 							except Exception as err:
 								self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
 								continue
