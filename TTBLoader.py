@@ -47,7 +47,7 @@ def move_parsed(workdir, source_file):
 
 
 def tmp_ttb_create(_pgdb):
-	q = 'create temp table tmp_ttb (code text, cost numeric(18,2), id1 text, id2 text, mask text, extcode text)'
+	q = 'create temp table tmp_ttb (code text, price numeric(18,2), id1 text, id2 text, mask text, extcode text, dateprice date not null default current_date, lvl int not null default 1, product_id text, producer_id text)'
 	try:
 		_pgdb.query(q)
 	except Exception as e:
@@ -61,8 +61,9 @@ def main():
 		logger.name = conf.APP_NAME + '.' + s
 
 		try:
-			conf.gc_sklitcode = cfg.get(s, 'gc_sklitcode')
+			conf.gc_sklitcode = cfg.getint(s, 'gc_sklitcode')
 		except configparser.NoOptionError:
+			conf.gc_sklitcode = None
 			logger.info('Не указан код СКЛИТ в секции {}'.format(s))
 			pass
 
@@ -70,6 +71,7 @@ def main():
 			host = cfg.get(s, 'host')
 			user = cfg.get(s, 'localdb')
 			workdir = cfg.get(s, 'workdir')
+			conf.sum_in_row = cfg.get(s, 'row_sum_threshold', fallback=200)
 			with Postgres(host, user, conf.APP_NAME) as pgdb:
 				ld = Loaders(pgdb)
 				tmp_ttb_create(pgdb)
@@ -92,7 +94,7 @@ def main():
 
 				if updflag:
 					logger.info('Обновлено {} привязок к кодам конкурентов.'.format(ld.rivalcodes_update()))
-					logger.info('Записано {} строк в хранилище цен.'.format(ld.table_2bonus_insert()))
+					logger.info('Записано {} строк в хранилище цен.'.format(ld.prices_storage_insert()))
 					ld.rivalconnections_update()
 
 		except configparser.NoOptionError as e:
@@ -109,14 +111,14 @@ if __name__ == '__main__':
 	else:
 		cwd = os.path.dirname(__file__)
 
-	settings = cwd + os.sep + 'config.ini'
+	settings = os.path.join(cwd, 'config.ini')
 
-	logfile = os.getcwd() + os.sep + 'logs' + os.sep + datetime.datetime.strftime(datetime.datetime.now(), '%Y%m%d.log')
+	logfile = os.path.join(cwd, 'logs', f'{datetime.datetime.now():%Y%m%d}.log')
 	log_format = logging.Formatter(fmt='%(asctime)s [%(name)s][%(levelname)s]: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 	handlers = [logging.StreamHandler(sys.stdout)]
 
-	if check_folder_exists(cwd + os.sep + 'logs'):
-		handlers.append(logging.FileHandler(cwd + os.sep + 'logs' + os.sep + datetime.datetime.strftime(datetime.datetime.now(), '%Y%m%d.log'), encoding='utf-8'))
+	if check_folder_exists(os.path.join(cwd, 'logs')):
+		handlers.append(logging.FileHandler(logfile, encoding='utf-8'))
 
 	logger = logging.getLogger(conf.APP_NAME)
 	logger.setLevel(logging.INFO)
@@ -127,7 +129,7 @@ if __name__ == '__main__':
 		logger.addHandler(h)
 
 	try:
-		cfg = configparser.ConfigParser()
+		cfg = configparser.ConfigParser(inline_comment_prefixes=';')
 		cfg.read_file(open(settings, 'r'))
 		main()
 		logger.name = conf.APP_NAME
@@ -136,5 +138,5 @@ if __name__ == '__main__':
 		print('Не найден файл config.ini')
 		sys.exit(1)
 	except configparser.ParsingError as err:
-		print('Ошибка обработки config.ini:\n{}'.format(err.message))
+		print(f'Ошибка обработки config.ini:\n{err.message}')
 		sys.exit(1)

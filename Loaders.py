@@ -2,6 +2,7 @@ import csv
 import logging
 import re
 import time
+from datetime import datetime
 
 import xlrd
 from dbfread import DBF
@@ -37,39 +38,49 @@ class Loaders(object):
 
 		return code
 
-	def table_2bonus_insert(self):
-		query = """with codekagsvss as (
-	select
-		prod.code
-		, kag.code kag
-		, ks.svss
-	from db1_product prod
-	inner join db1_classif kag on kag.id = prod.f28835914 and kag.code not like '%-%' and kag.code <>'0'
-	left join (select kag, min(svss) svss from svss inner join db1_product p on p.id = svss.id and p.f1376266 is null and svss>0 group by kag) ks on ks.kag = kag.code
-	where prod.class = 14745601 and prod.type = 14745601
-		and prod.f1376266 is null 
-		and not (lower(prod.name) like any(array['%акция%','%акционная%']))
+	@staticmethod
+	def is_float(string):
+		try:
+			float(string)
+			return True
+		except ValueError:
+			return False
+
+	def prices_storage_insert(self):
+		query = """with prod_svss as (
+	select dp.id, dp.code, svss.svss
+	from db1_product dp 
+	left join svss on svss.id = dp.id
+	where dp.class = 14745601 and dp.type = 14745601
 )
-insert into table_2bonus (kodpost, kag, cost, datecost)
-	select
-		rf.kodpost
-		, p.kag
-		, min(t.cost)
-		, CURRENT_DATE
-	from tmp_ttb t
-	inner join rivalformats rf on coalesce(rtrim(ltrim(rf.mask)),'') = coalesce(rtrim(ltrim(t.mask)),'') and coalesce(rtrim(ltrim(rf.id1)),'') = coalesce(rtrim(ltrim(t.id1)),'') and coalesce(rtrim(ltrim(rf.id2)),'') = coalesce(rtrim(ltrim(t.id2)),'')
-	inner join codekagsvss p on p.code = case when length(t.code)<6 then lpad(t.code::varchar,6,'0') else t.code end
-	where ( p.svss=0 or p.svss is null
-		or ((t.cost/p.svss*100-100) between -17 and 500 and p.svss<=50)
-		or ((t.cost/p.svss*100-100) between -17 and 100 and p.svss>50 and p.svss<=100)
-		or ((t.cost/p.svss*100-100) between -17 and 100 and p.svss>100 and p.svss<=250)
-		or ((t.cost/p.svss*100-100) between -13 and 90 and p.svss>250 and p.svss<=500)
-		or ((t.cost/p.svss*100-100) between -13 and 90 and p.svss>500 and p.svss<=1000)
-		or ((t.cost/p.svss*100-100) between -9 and 80 and p.svss>1000 and p.svss<=2000)
-		or ((t.cost/p.svss*100-100) between -9 and 80 and p.svss>2000))
-		and t.cost>0
-	group by rf.kodpost, p.kag
-on conflict on constraint table_2bonus_pk do update set cost = least(table_2bonus.cost, excluded.cost)"""
+insert into prices_storage (dateprice, kodpost, product_id, price)
+select distinct
+	coalesce(dateprice, current_date)
+	, rf.kodpost
+	, p.id
+	, min(t.price) price
+from (
+	select code, price, id1, id2, mask, dateprice from tmp_ttb where lvl = 1
+	union
+	select t.code, min(t.price), t.id1, t.id2, t.mask, t.dateprice 
+	from tmp_ttb t 
+	left join (select * from tmp_ttb tt where lvl = 1) tt on tt.code = t.code and tt.id1 = t.id1  and tt.id2 = t.id2 and tt.dateprice = t.dateprice 
+	where t.lvl > 1 and tt.code is null
+	group by t.code, t.id1, t.id2, t.mask, t.dateprice
+) t
+inner join rivalformats rf on coalesce(rtrim(ltrim(rf.mask)),'') = coalesce(rtrim(ltrim(t.mask)),'') and coalesce(rtrim(ltrim(rf.id1)),'') = coalesce(rtrim(ltrim(t.id1)),'') and coalesce(rtrim(ltrim(rf.id2)),'') = coalesce(rtrim(ltrim(t.id2)),'')
+left join prod_svss p on p.code = case when length(t.code)<6 then lpad(t.code::varchar,6,'0') else t.code end
+where ( p.svss=0 or p.svss is null
+		or ((t.price/p.svss*100-100) between -17 and 500 and p.svss<=50)
+		or ((t.price/p.svss*100-100) between -17 and 100 and p.svss>50 and p.svss<=100)
+		or ((t.price/p.svss*100-100) between -17 and 100 and p.svss>100 and p.svss<=250)
+		or ((t.price/p.svss*100-100) between -13 and 90 and p.svss>250 and p.svss<=500)
+		or ((t.price/p.svss*100-100) between -13 and 90 and p.svss>500 and p.svss<=1000)
+		or ((t.price/p.svss*100-100) between -9 and 80 and p.svss>1000 and p.svss<=2000)
+		or ((t.price/p.svss*100-100) between -9 and 80 and p.svss>2000))
+	and t.price>0
+group by coalesce(dateprice, current_date), rf.kodpost, p.id
+on conflict on constraint prices_storage_pk do update set price = least(prices_storage.price, excluded.price)"""
 		try:
 			return self.pgdb.query(query)
 		except Exception as e:
@@ -93,15 +104,15 @@ on conflict on constraint rivalcodes_pk do update set lastupd = now()"""
 
 	def rivalconnections_update(self):
 		query = """with updcount as (
-	select rf.kodpost, count(distinct code)
+	select rf.kodpost, count(distinct code), max(dateprice) dateprice
 	from tmp_ttb t
 	inner join rivalformats rf on coalesce(rtrim(ltrim(rf.mask)),'') = coalesce(rtrim(ltrim(t.mask)),'') and coalesce(rtrim(ltrim(rf.id1)),'') = coalesce(rtrim(ltrim(t.id1)),'') and coalesce(rtrim(ltrim(rf.id2)),'') = coalesce(rtrim(ltrim(t.id2)),'')
 	group by rf.kodpost
 	having count(distinct code)>200
 )
-update rivalconnections rc set lastupd = current_date
+update rivalconnections rc set lastupd = u.dateprice
 from updcount u
-where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is null)"""
+where u.kodpost = rc.kodpost and (rc.lastupd < u.dateprice or rc.lastupd is null)"""
 		try:
 			return self.pgdb.query(query)
 		except Exception as e:
@@ -109,7 +120,7 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 			return None
 
 	def loader_iacsv(self, _file, _mask):
-		ttb_insert = "insert into tmp_ttb (code, cost, id1, id2, mask, extcode) values %s"
+		insert_query = "insert into tmp_ttb (code, price, id1, id2, mask, extcode, dateprice, lvl, product_id, producer_id) values %s"
 
 		def lazy_iter():
 			keep_trying = True
@@ -119,9 +130,23 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 					with open(_file, 'r') as file:
 						for row in csv.DictReader(file, delimiter=';', quoting=csv.QUOTE_ALL):
 							try:
-								yield [row['GCCODE'], row['PRICE'].replace(',', '.'), row['SUP_ID'], row['PRICE_ID'], _mask, row['SELLER_CODE']]
+								str_level = row['LEVEL'] if 'LEVEL' in row else 1
+								str_date = datetime.strptime(row['DATE'][:10], '%Y-%m-%d') if 'DATE' in row else datetime.today()
+								str_price = row['PRICE'].replace(',', '.') or 0
+								str_sum = (0 if not self.is_float(row['STOCK']) else float(row['STOCK']))*(0 if not self.is_float(str_price) else float(str_price))
+								str_code = row['GCCODE'] if 'GCCODE' in row else row['AXCODE'] if 'AXCODE' in row else None
+								str_productid = row['PRODUCT_ID'] if 'PRODUCT_ID' in row else None
+								str_producerid = row['PRODUCER_ID'] if 'PRODUCER_ID' in row else None
+								str_sellercode = row['SELLER_CODE'] if 'SELLER_CODE' in row else row['SUPCODE'] if 'SUPCODE' in row else None
+								str_supid = row['SUP_ID'] if 'SUP_ID' in row else None
+								str_priceid = row['PRICE_ID'] if 'PRICE_ID' in row else None
+								if str_sum > float(config.sum_in_row) and all(x is not None for x in [str_code, str_priceid, str_supid]):
+									yield [str_code, str_price, row['SUP_ID'], row['PRICE_ID'], _mask, str_sellercode, str_date, str_level, str_productid, str_producerid]
+								else:
+									continue
+
 							except Exception as err:
-								self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
+								self.logger.error('Ошибка при обработке строки файла {}\n{}: {}'.format(_file, row, err))
 								continue
 						keep_trying = False
 				except PermissionError:
@@ -137,14 +162,29 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.query("""insert into platformcodes (id, pid, ext_prodid , ext_mfid)
+select distinct 
+	p.id
+	, 1 -- Аналитфармация
+	, t.product_id
+	, t.producer_id
+from tmp_ttb t
+inner join db1_product p on p.code = t.code
+where t.product_id is not null and t.producer_id is not null 
+on conflict on constraint platformcodes_pk do update set lastupd = now()""")
+		except Exception as e:
+			self.logger.error(f'Ошибка при обновлении platformcodes: {e}')
+			pass
+
+		try:
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_iaprotek(self, _file, _mask):
-		ttb_insert = "insert into tmp_ttb (code, cost, id1, mask) values %s"
+		insert_query = "insert into tmp_ttb (code, price, id1, mask) values %s"
 		startrow = 6
 
 		def lazy_iter():
@@ -175,14 +215,14 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 					return
 
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_iafivemin(self, _file, _mask):
-		ttb_insert = "insert into tmp_ttb (code, cost, id1, id2, mask) values %s"
+		insert_query = "insert into tmp_ttb (code, price, id1, id2, mask, dateprice) values %s"
 		startrow = 7
 		res = self.pgdb.query('select min(id2::int), max(id2::int) from rivalformats where lower(format) = %s and mask = %s', ['iafivemin', _mask])
 
@@ -193,11 +233,12 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 				try:
 					with xlrd.open_workbook(_file) as wb:
 						for sh in wb.sheets():
+							dt = datetime.strptime(sh.cell(0, 0).value[sh.cell(0, 0).value.find('создан') + 7:], '%d.%m.%Y %H:%M:%S')
 							for row in range(startrow, sh.nrows):
 								for k in range(res[0]['min']-1, res[0]['max']):
 									if sh.cell_type(row, k) == xlrd.XL_CELL_NUMBER:
 										try:
-											yield [sh.cell(row, 0).value, sh.cell(row, k).value, sh.name, str(k + 1), _mask]
+											yield [sh.cell(row, 0).value, sh.cell(row, k).value, sh.name, str(k + 1), _mask, dt]
 										except Exception as err:
 											self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
 											continue
@@ -216,14 +257,14 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 					return
 
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_iametr(self, _file, _mask):
-		ttb_insert = "insert into tmp_ttb (code, cost, id1, id2, mask) values %s"
+		insert_query = "insert into tmp_ttb (code, price, id1, id2, mask, dateprice) values %s"
 		startrow = 3
 		startcol = 11
 
@@ -238,7 +279,7 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 								for col in range(startcol, sh.ncols, 2):
 									if sh.cell_type(row, col) == xlrd.XL_CELL_NUMBER and sh.cell_type(row, 0) == xlrd.XL_CELL_TEXT:
 										try:
-											yield [sh.cell(row, 0).value, sh.cell(row, col).value, sh.cell(0, col).value, sh.name, _mask]
+											yield [sh.cell(row, 0).value, sh.cell(row, col).value, sh.cell(0, col).value, sh.name, _mask, datetime.strptime(sh.cell(1, col).value, '%d.%m.%Y %H:%M:%S')]
 										except Exception as err:
 											self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
 											continue
@@ -257,15 +298,15 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 					return
 
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_fefivemin(self, _file, _mask):
-		ttb_insert = """with tmp_fe as (
-	select vls.column1 as name, vls.column2 as code, vls.column3 as mf, vls.column4 as cost, vls.column5 as id1, vls.column6 as id2, vls.column7 as mask  
+		insert_query = """with tmp_fe as (
+	select vls.column1 as name, vls.column2 as code, vls.column3 as mf, vls.column4 as cost, vls.column5 as id1, vls.column6 as id2, vls.column7 as mask, vls.column8 as dateprice  
 	from (values %s) as vls
 ) 
 , inserter as (
@@ -274,13 +315,14 @@ where u.kodpost = rc.kodpost and (rc.lastupd <> current_date or rc.lastupd is nu
 	from tmp_fe 
 	inner join db1_product p on p.code = tmp_fe.code where tmp_fe.code<>'' on conflict on constraint fe_product_pk do nothing
 )
-insert into tmp_ttb (code, cost, id1, id2, mask)
+insert into tmp_ttb (code, price, id1, id2, mask, dateprice)
 select 
 	pr.code
 	, tmp_fe.cost
 	, tmp_fe.id1
 	, tmp_fe.id2
 	, tmp_fe.mask
+	, tmp_fe.dateprice
 from tmp_fe
 inner join fe_product p on p.fe_name = tmp_fe.name and p.fe_mf = tmp_fe.mf 
 inner join db1_product pr on pr.id = p.id"""
@@ -294,6 +336,7 @@ inner join db1_product pr on pr.id = p.id"""
 					with xlrd.open_workbook(_file) as wb:
 						for sh in wb.sheets():
 							id1 = sh.cell(3, 0).value.split(':')[1].strip()
+							dt = datetime.strptime(sh.cell(0, 0).value.split(' ')[2], '%d.%m.%Y')
 							for row in range(startrow, sh.nrows):
 								for col in range(0, sh.ncols):
 									if sh.cell(startrow - 1, col).value.find('Мин цена') != -1 and sh.cell_type(row, col) == xlrd.XL_CELL_NUMBER:
@@ -302,7 +345,7 @@ inner join db1_product pr on pr.id = p.id"""
 										else:
 											code = sh.cell(row, 1).value.strip()
 										for cd in code.split(','):
-											yield [sh.cell(row, 0).value.strip(), cd.strip(), sh.cell(row, 2).value.strip(), sh.cell(row, col).value, id1, sh.cell(row, col + 1).value.strip(), _mask]
+											yield [sh.cell(row, 0).value.strip(), cd.strip(), sh.cell(row, 2).value.strip(), sh.cell(row, col).value, id1, sh.cell(row, col + 1).value.strip(), _mask, dt]
 						keep_trying = False
 				except PermissionError:
 					if tries <= max_tries:
@@ -318,14 +361,14 @@ inner join db1_product pr on pr.id = p.id"""
 					return
 
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_eprica(self, _file, _mask):
-		ttb_insert = """insert into tmp_ttb (code, cost, mask)
+		insert_query = """insert into tmp_ttb (code, price, mask)
 select p.code, e.column2::numeric as cost, e.column3 as mask
 from (values %s) e
 inner join rivalformats rf on rf.mask = e.column3
@@ -360,14 +403,14 @@ inner join db1_product p on p.id = rc.id"""
 					return
 
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_yugfarm(self, _file, _mask):
-		ttb_insert = """insert into tmp_ttb (code, cost, mask)
+		insert_query = """insert into tmp_ttb (code, price, mask)
 select p.code, e.column2::numeric as cost, e.column3 as mask
 from (values %s) e
 inner join rivalformats rf on rf.mask = e.column3
@@ -404,14 +447,14 @@ inner join db1_product p on p.id = rc.id"""
 					return
 
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_april(self, _file, _mask):
-		ttb_insert = """insert into tmp_ttb (code, cost, id1, mask)
+		insert_query = """insert into tmp_ttb (code, price, id1, mask)
 select 
 	pr.code
 	, vls.column2
@@ -446,14 +489,14 @@ inner join db1_product pr on pr.id = ean.pid"""
 					return
 
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_farmnet(self, _file, _mask):
-		ttb_insert = """with tmp_farmnet as (
+		insert_query = """with tmp_farmnet as (
 	select vls.column1 as ext_code, vls.column2 as code, vls.column3 as cost, vls.column4 as id1, vls.column5 as mask  
 	from (values %s) as vls
 )
@@ -465,7 +508,7 @@ inner join db1_product pr on pr.id = ean.pid"""
 	where ext_code is not null and ext_code<>''
 	on conflict on constraint platformcodes_pk do nothing 
 )
-insert into tmp_ttb (code, cost, id1, mask)
+insert into tmp_ttb (code, price, id1, mask)
 select p.code, f.cost, f.id1, f.mask
 from tmp_farmnet f
 inner join platformcodes pc on pc.ext_prodid = f.ext_code and pc.pid = (select id from platforms where lower(name) = 'фармнет')
@@ -502,14 +545,14 @@ where f.cost>0"""
 					return
 
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_pharmmarket(self, _file, _mask):
-		ttb_insert = """insert into tmp_ttb (code, cost, id1, mask) values %s"""
+		insert_query = """insert into tmp_ttb (code, price, id1, mask, dateprice) values %s"""
 		startrow = 6
 		startcol = 6
 
@@ -523,7 +566,7 @@ where f.cost>0"""
 							for row in range(startrow, sh.nrows):
 								for col in range(startcol, sh.ncols):
 									if sh.cell_type(row, col) == xlrd.XL_CELL_NUMBER and sh.cell_type(row, 2) != xlrd.XL_CELL_EMPTY:
-										yield [self.gc_prodcode(sh.cell(row, 2).value), sh.cell(row, col).value, sh.cell(3, col).value, _mask]
+										yield [self.gc_prodcode(sh.cell(row, 2).value), sh.cell(row, col).value, sh.cell(3, col).value, _mask, datetime.strptime(sh.cell(4, col).value, '%d.%m.%Y')]
 									else:
 										pass
 						keep_trying = False
@@ -541,14 +584,14 @@ where f.cost>0"""
 					return
 
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_top1000(self, _file, _mask):
-		ttb_insert = """insert into tmp_ttb (code, cost, id1, mask) values %s"""
+		insert_query = """insert into tmp_ttb (code, price, id1, mask, dateprice) values %s"""
 		res = self.pgdb.query('select min(id1::int), max(id1::int) from rivalformats where lower(format) = %s and mask = %s', ['top1000', _mask])
 
 		startrow = 7
@@ -561,11 +604,12 @@ where f.cost>0"""
 				try:
 					with xlrd.open_workbook(_file, ignore_workbook_corruption=True) as wb:
 						for sh in wb.sheets():
+							dt = xlrd.xldate.xldate_as_datetime(sh.cell(3, 2).value, wb.datemode)
 							for row in range(startrow, sh.nrows):
 								for col in range(startcol, res[0]['max']):
 									if sh.cell_type(row, col) == xlrd.XL_CELL_NUMBER and sh.cell_type(row, 14) != xlrd.XL_CELL_EMPTY:
 										for code in str(sh.cell(row, 14).value).split(';'):
-											yield [self.gc_prodcode(code), sh.cell(row, col).value, col+1, _mask]
+											yield [self.gc_prodcode(code), sh.cell(row, col).value, col+1, _mask, dt]
 									else:
 										pass
 						keep_trying = False
@@ -583,14 +627,14 @@ where f.cost>0"""
 					return
 
 		try:
-			self.pgdb.batch_insert(ttb_insert, lazy_iter())
+			self.pgdb.batch_insert(insert_query, lazy_iter())
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def loader_sklit_client(self, _file, _mask):
-		ttb_insert = """with rnk as (
+		insert_query = """with rnk as (
 	select id_name, id_mak, price, id_p, kod, zakaz_min, row_number() over (partition by id_p, id_name, id_mak, kod order by zakaz_min, price) rnk from tmp_sklit
 )
 , platformcodes_upd as ( -- обновляем привязки кодов площадки 
@@ -619,10 +663,10 @@ where f.cost>0"""
 		where t.price>0 and t.id_p<>%(gc_code)s
 	) t
 )
-insert into tmp_ttb (code, cost, id1, mask, extcode)
+insert into tmp_ttb (code, price, id1, mask, extcode)
 select code, price, id_p, %(mask)s, kod from ranked where rnk=1"""
 
-		# в этой загрузке алгоритм чцть хитрее, и чтобы не читать файл 2 раза используем временную таблицу
+		# в этой загрузке алгоритм чуть хитрее, и чтобы не читать файл 2 раза используем временную таблицу
 		self.pgdb.query('create temp table if not exists tmp_sklit(id_name int, id_mak int, price numeric(19,2), id_p int, kod text, zakaz_min int)')
 		self.pgdb.query('truncate table tmp_sklit')
 		sklt_insert = "insert into tmp_sklit (values %s)"
@@ -664,7 +708,7 @@ select code, price, id_p, %(mask)s, kod from ranked where rnk=1"""
 			self.logger.error('Ошибка при записи данных файла {} в промежуточную таблицу (tmp_sklit): {}'.format(_file, e))
 
 		try:
-			self.pgdb.query(ttb_insert, {'mask': _mask, 'gc_code': config.gc_sklitcode})
+			self.pgdb.query(insert_query, {'mask': _mask, 'gc_code': config.gc_sklitcode})
 		except Exception as e:
 			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
 
