@@ -28,7 +28,8 @@ def get_mask_list(_pgdb):
 
 def check_folder(workdir, masks):
 	try:
-		files = list(chain.from_iterable(filter(lambda y: len(y) > 0, map(lambda x: [{'file': i, 'mask': x['mask'], 'format': x['format']} for i in os.listdir(workdir) if os.path.isfile(workdir+os.sep+i) and fnmatch.fnmatch(i, ('' if '*' in x['mask'] else '*')+x['mask']+('' if '*' in x['mask'] else '*'))], masks))))
+		# files = list(chain.from_iterable(filter(lambda y: len(y) > 0, map(lambda x: [{'file': i, 'mask': x['mask'], 'format': x['format']} for i in os.listdir(workdir) if os.path.isfile(workdir+os.sep+i) and fnmatch.fnmatch(i, ('' if '*' in x['mask'] else '*')+x['mask']+('' if '*' in x['mask'] else '*'))], masks))))
+		files = list(chain.from_iterable(filter(lambda y: len(y) > 0, map(lambda x: [{'file': i, 'mask': x['mask'], 'format': x['format']} for i in os.listdir(workdir) if fnmatch.fnmatch(i, ('' if '*' in x['mask'] else '*')+x['mask']+('' if '*' in x['mask'] else '*'))], masks))))
 	except FileNotFoundError:
 		logger.error('Нет каталога указанного в настройках {}'.format(workdir))
 		files = []
@@ -38,7 +39,7 @@ def check_folder(workdir, masks):
 
 def move_parsed(workdir, source_file):
 	archive_dir = workdir+os.sep+'parsed'+os.sep+datetime.datetime.now().strftime('%Y%m%d')
-	dest_file = source_file[:source_file.rindex('.')]+'_'+datetime.datetime.now().strftime('%Y%m%d_%H%M%S')+source_file[source_file.rindex('.'):]
+	dest_file = source_file[:source_file.rindex('.')]+'_'+datetime.datetime.now().strftime('%Y%m%d_%H%M%S')+source_file[source_file.rindex('.'):] if os.path.isfile(workdir+os.sep+source_file) else source_file+'_'+datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 	if check_folder_exists(archive_dir):
 		try:
 			os.rename(workdir+os.sep+source_file, archive_dir+os.sep+dest_file)
@@ -47,9 +48,10 @@ def move_parsed(workdir, source_file):
 
 
 def tmp_ttb_create(_pgdb):
-	q = 'create temp table tmp_ttb (code text, price numeric(18,2), id1 text, id2 text, mask text, extcode text, dateprice date not null default current_date, lvl int not null default 1, product_id text, producer_id text)'
+	q = 'create temp table if not exists tmp_ttb (code text, price numeric(18,2), id1 text, id2 text, mask text, extcode text, dateprice date not null default current_date, lvl int not null default 1, product_id text, producer_id text)'
 	try:
 		_pgdb.query(q)
+		_pgdb.query('truncate tmp_ttb')
 	except Exception as e:
 		logger.error('Произошла ошибка при создании временной таблицы {}'.format(e.args[0]))
 
@@ -75,6 +77,14 @@ def main():
 			with Postgres(host, user, conf.APP_NAME) as pgdb:
 				ld = Loaders(pgdb)
 				tmp_ttb_create(pgdb)
+
+				rivals = pgdb.query('select idrival, namerival from rivalnames')
+				for file in os.listdir(workdir):
+					for rvl in rivals:
+						if fnmatch.fnmatch(file, f'TSK_{rvl[1]}*'):
+							ld.tsk_loader(os.path.join(workdir, file), rvl[0])
+							move_parsed(workdir, file)
+
 				summary = 0
 				for f in check_folder(workdir, get_mask_list(pgdb)):
 					filename = workdir + os.sep + f['file']
@@ -86,7 +96,8 @@ def main():
 						if count > 0:
 							updflag = True
 						# даже если файл был пустой и из него ничего не записалось в базу - все равно перемещаем его чтоб не мешался
-						move_parsed(workdir, f['file'])
+						if count >= 0:
+							move_parsed(workdir, f['file'])
 
 					except Exception as e:
 						logger.error('Произошла ошибка при попытке обработать файл {}: {}'.format(f['file'], e))
@@ -138,5 +149,5 @@ if __name__ == '__main__':
 		print('Не найден файл config.ini')
 		sys.exit(1)
 	except configparser.ParsingError as err:
-		print(f'Ошибка обработки config.ini:\n{err.message}')
+		print(f'Ошибка обработки config.ini:\n{err}')
 		sys.exit(1)

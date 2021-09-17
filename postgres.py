@@ -1,5 +1,5 @@
 import psycopg2 as pg
-from psycopg2.extras import execute_values, RealDictCursor
+from psycopg2.extras import execute_values, DictCursor
 import logging
 from config import APP_NAME
 
@@ -38,7 +38,7 @@ class Postgres:
 	def query(self, _query, _params=None):
 		self.connect()
 		try:
-			with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+			with self.conn.cursor(cursor_factory=DictCursor) as cursor:
 				cursor.execute(_query, _params)
 				return cursor.fetchall() if cursor.description else cursor.rowcount
 		except Exception as error:
