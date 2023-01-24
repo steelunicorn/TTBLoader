@@ -47,6 +47,21 @@ class Loaders(object):
 		except ValueError:
 			return False
 
+	def collect_stocks(self):
+		q ="""insert into stocks_storage (date, idrival, idrivalfilial, af_prodid, af_mfid, stock)
+select tt.dateprice, rc.idrival, rc.idrivalfilial, product_id, producer_id, avg(qnt)::int
+from tmp_ttb tt 
+inner join rivalformats r on r.mask = tt.mask and r.id1 = tt.id1 and r.id2 = tt.id2
+inner join rivalconnections rc on rc.kodpost = r.kodpost
+group by rc.idrival, rc.idrivalfilial, dateprice, product_id, producer_id 
+on conflict on constraint stocks_storage_pk do update set stock  = ((stocks_storage.stock+excluded.stock)/2)::int
+"""
+		try:
+			return self.pgdb.query(q)
+		except Exception as e:
+			self.logger.error(f'Ошибка при записи данных об остатках: {e}')
+			return None
+
 	def prices_storage_insert(self):
 		query = """with prod_svss as (
 	select dp.id, dp.code, svss.svss
@@ -167,14 +182,28 @@ on conflict on constraint rivalcodes_pk do update set lastupd = current_timestam
 		if not os.path.isfile(_file):
 			return -1
 
-		insert_query = "insert into tmp_ttb (code, price, id1, id2, mask, extcode, dateprice, lvl, product_id, producer_id) values %s"
+		insert_query = """with tmp_analit as (
+	select vls.column1 as code, vls.column2 as price, vls.column3 as id1, vls.column4 as id2, vls.column5 as mask, vls.column6 as extcode, vls.column7 as dateprice, vls.column8 as lvl, vls.column9 as product_id, vls.column10 as producer_id, vls.column11 as qnt
+	from (values %s) as vls
+)
+, platform_update as (
+	insert into platformcodes (id, pid, ext_prodid, ext_mfid)
+	select distinct p.id, (select id from platforms where lower(name) = 'аналитфармация'), a.product_id, a.producer_id 
+	from tmp_analit a
+	inner join db1_product p on p.code = a.code
+	where a.product_id is not null and a.product_id <> ''
+	on conflict on constraint platformcodes_pk do update set lastupd = now() 
+)
+insert into tmp_ttb (code, price, id1, id2, mask, extcode, dateprice, lvl, product_id, producer_id, qnt)
+select a.code, a.price::numeric, a.id1, a.id2, a.mask, a.extcode, a.dateprice::date, a.lvl::int, a.product_id, a.producer_id, a.qnt::int
+from tmp_analit a"""
 
 		def lazy_iter():
 			keep_trying = True
 			tries = 1
 			while keep_trying:
 				try:
-					with open(_file, 'r') as file:
+					with open(_file, 'r', encoding='windows-1251') as file:
 						for row in csv.DictReader(file, delimiter=';', quoting=csv.QUOTE_ALL):
 							try:
 								str_level = row['LEVEL'] if 'LEVEL' in row else 1
@@ -187,8 +216,9 @@ on conflict on constraint rivalcodes_pk do update set lastupd = current_timestam
 								str_sellercode = row['SELLER_CODE'] if 'SELLER_CODE' in row else row['SUPCODE'] if 'SUPCODE' in row else None
 								str_supid = row['SUP_ID'] if 'SUP_ID' in row else None
 								str_priceid = row['PRICE_ID'] if 'PRICE_ID' in row else None
+								str_stock = (0 if not self.is_float(row['STOCK']) else float(row['STOCK'])) if 'STOCK' in row else None
 								if str_sum > float(config.sum_in_row) and all(x is not None for x in [str_code, str_priceid, str_supid]):
-									yield [str_code, str_price, row['SUP_ID'], row['PRICE_ID'], _mask, str_sellercode, str_date, str_level, str_productid, str_producerid]
+									yield [str_code, str_price, row['SUP_ID'], row['PRICE_ID'], _mask, str_sellercode, str_date, str_level, str_productid, str_producerid, str_stock]
 								else:
 									continue
 
@@ -208,20 +238,21 @@ on conflict on constraint rivalcodes_pk do update set lastupd = current_timestam
 				except Exception as err:
 					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
 					return
-		try:
-			self.pgdb.query("""insert into platformcodes (id, pid, ext_prodid , ext_mfid)
-select distinct 
-	p.id
-	, 1 -- Аналитфармация
-	, t.product_id
-	, t.producer_id
-from tmp_ttb t
-inner join db1_product p on p.code = t.code
-where t.product_id is not null and t.producer_id is not null 
-on conflict on constraint platformcodes_pk do update set lastupd = now()""")
-		except Exception as e:
-			self.logger.error(f'Ошибка при обновлении platformcodes: {e}')
-			pass
+
+# 		try:
+# 			self.pgdb.query("""insert into platformcodes (id, pid, ext_prodid , ext_mfid)
+# select distinct
+# 	p.id
+# 	, 1 -- Аналитфармация
+# 	, t.product_id
+# 	, t.producer_id
+# from tmp_ttb t
+# inner join db1_product p on p.code = t.code
+# where t.product_id is not null and t.producer_id is not null
+# on conflict on constraint platformcodes_pk do update set lastupd = now()""")
+# 		except Exception as e:
+# 			self.logger.error(f'Ошибка при обновлении platformcodes: {e}')
+# 			pass
 
 		try:
 			self.pgdb.batch_insert(insert_query, lazy_iter())
@@ -987,6 +1018,47 @@ inner join db1_product p on p.id = c.id"""
 
 		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
+	def loader_aprilkrd(self, _file, _mask):
+		if not os.path.isfile(_file):
+			return -1
+
+		insert_query = "insert into tmp_ttb (code, price, id1, mask, dateprice) values %s"
+		startrow = 1
+
+		def lazy_iter():
+			keep_trying = True
+			tries = 1
+			while keep_trying:
+				try:
+					with xlrd.open_workbook(_file) as wb:
+						for sh in wb.sheets():
+							for row in range(startrow, sh.nrows):
+								try:
+									yield [sh.cell(row, 1).value, sh.cell(row, 2).value, sh.cell(row, 7).value, _mask, xlrd.xldate.xldate_as_datetime(sh.cell(row, 6).value, wb.datemode)]
+								except Exception as err:
+									self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
+									continue
+						keep_trying = False
+				except PermissionError:
+					if tries <= max_tries:
+						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
+						tries += 1
+						time.sleep(wait_time)
+						continue
+					else:
+						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
+						return
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
+					return
+
+		try:
+			self.pgdb.batch_insert(insert_query, lazy_iter())
+		except Exception as e:
+			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
+
+		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
+
 	def loader_unico(self, _file, _mask):
 		if not os.path.isfile(_file):
 			return -1
@@ -1085,6 +1157,46 @@ inner join db1_product p on p.id = rc.id"""
 		else:
 			return -1
 
+	def loader_aprilkrdcsv(self, _file, _mask):
+		if not os.path.isfile(_file):
+			return -1
+
+		insert_query = "insert into tmp_ttb (code, price, id1, mask, dateprice) values %s"
+
+		def lazy_iter():
+			keep_trying = True
+			tries = 1
+			while keep_trying:
+				try:
+					with open(_file, 'r', encoding='UTF-8') as file:
+						reader = csv.reader(file, delimiter=';', quoting=csv.QUOTE_NONE)
+						[next(reader, None) for x in range(2)]
+						for row in reader:
+							try:
+								yield [row[1], float(row[2].replace(',','.')), row[7], _mask, datetime.strptime(row[6][:10], '%d.%m.%Y')]
+							except Exception as err:
+								self.logger.error('Ошибка при обработке строки файла {}: {}'.format(_file, err))
+								continue
+						keep_trying = False
+				except PermissionError:
+					if tries <= max_tries:
+						self.logger.info('Файл занят {}. Ожидаю {} секунд.'.format(_file, wait_time))
+						tries += 1
+						time.sleep(wait_time)
+						continue
+					else:
+						self.logger.info('Файл занят слишком долго {}. Пропускаю.'.format(_file, wait_time))
+						return
+				except Exception as err:
+					self.logger.error('Ошибка при открытии файла {}: {}'.format(_file, err))
+					return
+
+		try:
+			self.pgdb.batch_insert(insert_query, lazy_iter())
+		except Exception as e:
+			self.logger.error('Ошибка при записи данных файла {} во временную таблицу: {}'.format(_file, e))
+
+		return self.pgdb.query('select count(*) from tmp_ttb')[0]['count']
 
 	def __init__(self, _pgdb):
 		self.logger = logging.getLogger(config.APP_NAME)
@@ -1107,6 +1219,8 @@ inner join db1_product p on p.id = rc.id"""
 			'katrenvrn': self.loader_katrenvrn,
 			'unico': self.loader_unico,
 			'mapteka': self.loader_mapteka,
+			'april_krd': self.loader_aprilkrd,
+			'april_krdcsv': self.loader_aprilkrdcsv,
 		}
 
 	def __enter__(self):

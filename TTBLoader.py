@@ -16,6 +16,8 @@ import config as conf
 # spec.loader.exec_module(module)
 # res = module.load('Rep2053_20190125_14_14.xls')
 
+DEBUG = False
+
 
 def check_folder_exists(p):
 	os.makedirs(p, exist_ok=True)
@@ -48,7 +50,7 @@ def move_parsed(workdir, source_file):
 
 
 def tmp_ttb_create(_pgdb):
-	q = 'create temp table if not exists tmp_ttb (code text, price numeric(18,2), id1 text, id2 text, mask text, extcode text, dateprice date not null default current_date, lvl int not null default 1, product_id text, producer_id text)'
+	q = f'create {"temp" if DEBUG is False else ""} table if not exists tmp_ttb (code text, price numeric(18,2), id1 text, id2 text, mask text, extcode text, dateprice date not null default current_date, lvl int not null default 1, product_id text, producer_id text, qnt int)'
 	try:
 		_pgdb.query(q)
 		_pgdb.query('truncate tmp_ttb')
@@ -68,6 +70,8 @@ def main():
 			conf.gc_sklitcode = None
 			logger.info('Не указан код СКЛИТ в секции {}'.format(s))
 			pass
+
+		collect_stocks = cfg.getboolean(s, 'collect_stocks', fallback=False)
 
 		try:
 			host = cfg.get(s, 'host')
@@ -106,6 +110,8 @@ def main():
 				if updflag:
 					logger.info('Обновлено {} привязок к кодам конкурентов.'.format(ld.rivalcodes_update()))
 					logger.info('Записано {} строк в хранилище цен.'.format(ld.prices_storage_insert()))
+					if collect_stocks:
+						logger.info(f'Записано {ld.collect_stocks()} строк по запасам конкурентов.')
 					ld.rivalconnections_update()
 
 		except configparser.NoOptionError as e:
@@ -141,7 +147,7 @@ if __name__ == '__main__':
 
 	try:
 		cfg = configparser.ConfigParser(inline_comment_prefixes=';')
-		cfg.read_file(open(settings, 'r'))
+		cfg.read_file(open(settings, 'r', encoding='Windows-1251'))
 		main()
 		logger.name = conf.APP_NAME
 		logger.info('Работа завершена')
