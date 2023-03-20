@@ -91,6 +91,8 @@ def main():
 
 				summary = 0
 				for f in check_folder(workdir, get_mask_list(pgdb)):
+					if '.zip' in f['file']:
+						continue
 					filename = workdir + os.sep + f['file']
 					try:
 						count = ld.selector[f['format'].lower()](filename, f['mask'])
